@@ -39,6 +39,8 @@ public class ImageLoader {
 
     private static final int DISK_CACHE_INDEX = 0;
 
+    private boolean mIsDiskLruCacheCreated = false;
+
     private Context mContext;
 
     private ImageResizer mImaheResizer = new ImageResizer();
@@ -76,6 +78,7 @@ public class ImageLoader {
                  * 缓存的总大小
                  */
                 mDiskLruCache = DiskLruCache.open(diskCacheDir, 1, 1, DISK_CACHE_SIZE);
+                mIsDiskLruCacheCreated = true;
             } catch (IOException e) {
                 e.printStackTrace();
             }
@@ -101,8 +104,65 @@ public class ImageLoader {
         return mMemoryCache.get(key);
     }
 
+    /**
+     * load bitmap from memory cache or disk cache or network
+     * @param uri http url
+     * @param reqWidth the width ImageView desired
+     * @param reqHeight the height ImageView desired
+     * @return bitmap, maybe null
+     */
+    public Bitmap loadBitmap(String uri, int reqWidth, int reqHeight) {
+        // 首先尝试从内存缓存中读取图片
+        Bitmap bitmap = loadBitmapFromMemCache(uri);
+        if (bitmap != null) {
+            Log.d(TAG, "loadBitmapFromMemCache, url : " + uri);
+            return bitmap;
+        }
+
+        try {
+            // 接着尝试从磁盘缓存中读取图片
+            bitmap = loadBitmapFromDiskCache(uri, reqWidth, reqHeight);
+            if (bitmap != null) {
+                Log.d(TAG, "loadBitmapFromDisk, url : " + uri);
+                return bitmap;
+            }
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
+
+        if (bitmap == null && !mIsDiskLruCacheCreated) {
+            Log.w(TAG, "encounter error, DiskLruCache is not created.");
+            // 最后才从网络中拉取图片
+            bitmap = downloadBitmapFromUrl(uri);
+        }
+
+        return bitmap;
+
+    }
+
+    /**
+     * 从内存缓存中读取图片
+     * @param url
+     * @return
+     */
+    private Bitmap loadBitmapFromMemCache(String url) {
+        final String key = hashKeyFormUrl(url);
+        Bitmap bitmap = getBitmapFromMemCache(key);
+        return bitmap;
+    }
+
+    /**
+     * 这个方法不能在主线程中调用，否则就抛出异常
+     * @param url
+     * @param reqWidth
+     * @param reqHeight
+     * @return
+     * @throws IOException
+     */
     private Bitmap loadBitmapFromHttp(String url, int reqWidth, int reqHeight) throws IOException {
+        // 通过检查当前线程的Looper是否为主线程的Looper来判断当前线程是否是主线程
         if (Looper.myLooper() == Looper.getMainLooper()) {
+            // 如果是主线程就直接抛出异常中止程序
             throw new RuntimeException("can not visit network from UI Thread.");
         }
         if (mDiskLruCache == null) {
@@ -125,9 +185,19 @@ public class ImageLoader {
         return loadBitmapFromDiskCache(url, reqWidth, reqHeight);
     }
 
+    /**
+     * 从磁盘缓存中读取图片
+     *
+     * @param url
+     * @param reqWidth
+     * @param reqHeight
+     * @return
+     * @throws IOException
+     */
     private Bitmap loadBitmapFromDiskCache(String url, int reqWidth, int reqHeight) throws IOException {
+        // 通过检查当前线程的Looper是否为主线程的Looper来判断当前线程是否是主线程
         if (Looper.myLooper() == Looper.getMainLooper()) {
-            Log.w(TAG, "load bitmap from UI Thread, it's not recommanded!");
+            Log.w(TAG, "load bitmap from UI Thread, it's not recommended!");
         }
         if (mDiskLruCache == null) {
             return null;
@@ -192,6 +262,11 @@ public class ImageLoader {
         return false;
     }
 
+    /**
+     * 从网络拉取图片
+     * @param urlString
+     * @return
+     */
     private Bitmap downloadBitmapFromUrl(String urlString) {
         Bitmap bitmap = null;
         HttpURLConnection urlConnection = null;
