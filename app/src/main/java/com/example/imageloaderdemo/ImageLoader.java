@@ -6,10 +6,13 @@ import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
 import android.os.Build;
 import android.os.Environment;
+import android.os.Handler;
 import android.os.Looper;
+import android.os.Message;
 import android.os.StatFs;
 import android.util.Log;
 import android.util.LruCache;
+import android.widget.ImageView;
 
 import java.io.BufferedInputStream;
 import java.io.BufferedOutputStream;
@@ -22,6 +25,12 @@ import java.net.HttpURLConnection;
 import java.net.URL;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
+import java.util.concurrent.Executor;
+import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.ThreadFactory;
+import java.util.concurrent.ThreadPoolExecutor;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import libcore.io.DiskLruCache;
 
@@ -32,6 +41,22 @@ public class ImageLoader {
 
     private static final String TAG = "ImageLoader";
 
+    public static final int MESSAGE_POST_RESULT = 1;
+
+    // 获取当前设备的CPU核心数
+    private static final int CPU_COUNT = Runtime.getRuntime().availableProcessors();
+
+    // 核心线程数 为当前设备的CPU核心数加1
+    private static final int CORE_POOL_SIZE = CPU_COUNT + 1;
+
+    // 最大线程数 为当前设备的CPU核心数的2倍加1
+    private static final int MAXIMUM_POOL_SIZE = CPU_COUNT * 2 + 1;
+
+    // 线程闲置超时时长
+    private static final long KEEP_ALIVE = 10L;
+
+    private static final int TAG_KEY_URI = 0x1;
+
     // 磁盘缓存的容量 50MB
     private static final long DISK_CACHE_SIZE = 1024 * 1024 * 50;
 
@@ -40,6 +65,71 @@ public class ImageLoader {
     private static final int DISK_CACHE_INDEX = 0;
 
     private boolean mIsDiskLruCacheCreated = false;
+
+    private static final ThreadFactory sThreadFactory = new ThreadFactory() {
+
+        private final AtomicInteger mCount = new AtomicInteger(1);
+
+        @Override
+        public Thread newThread(Runnable r) {
+            return new Thread(r, "ImageLoader#" + mCount.getAndIncrement());
+        }
+
+    };
+
+    /**
+     * public ThreadPoolExecutor(int corePoolSize,
+     *                           int maximumPoolSize,
+     *                           long keepAliveTime,
+     *                           TimeUnit unit,
+     *                           BlockingQueue<Runnable> workQueue,
+     *                           ThreadFactory threadFactory)
+     *
+     *  @param corePoolSize 线程池的核心线程数
+     *                      默认情况下，核心线程会在线程池中一直存活
+     *                      即使它们处于闲置状态
+     *
+     *                      如果将ThreadPoolExecutor的allowCoreThreadTimeOut属性设置为true
+     *                      那么闲置的核心线程在等待新任务到来时会有超时策略
+     *                      这个时间间隔由keepAliveTime所指定
+     *                      当等待时间超过keepAliveTime所指定的时长后
+     *                      核心线程就会被终止
+     *
+     *  @param maximumPoolSize 线程池所能容纳的最大线程数
+     *                         当活动线程数达到这个数值后
+     *                         后续的新任务将会被阻塞
+     *
+     *  @param keepAliveTime 非核心线程闲置时的超时时长
+     *                       超过这个时长，非核心线程就会被回收
+     *
+     *  @param unit 用于指定keepAliveTime参数的时间单位 这是一个枚举
+     *
+     *  @param workQueue 线程池中的任务队列
+     *                   通过线程池的execute方法提交的Runnable对象会存储在这个参数中
+     *
+     *  由于3.0以上的版本AsyncTask是串行执行的
+     *  无法实现并发的效果
+     *
+     *  故此处采用线程池
+     *
+     */
+    public static final Executor THREAD_POOL_EXECUTOR = new ThreadPoolExecutor(
+            CORE_POOL_SIZE, MAXIMUM_POOL_SIZE, KEEP_ALIVE, TimeUnit.SECONDS,
+            new LinkedBlockingQueue<Runnable>(), sThreadFactory);
+
+    private Handler mMainHandler = new Handler(Looper.getMainLooper()) {
+        @Override
+        public void handleMessage(Message msg) {
+            LoaderResult result = (LoaderResult) msg.obj;
+            ImageView imageView = result.imageView;
+            String uri = (String) imageView.getTag(TAG_KEY_URI);
+            if (uri.equals(result.uri)) {
+                imageView.setImageBitmap(result.bitmap);
+            } else {
+                Log.w(TAG, "set image bitmap, but url has changed, ignored!");
+            }
+        }
+    };
 
     private Context mContext;
 
@@ -102,6 +192,41 @@ public class ImageLoader {
 
     private Bitmap getBitmapFromMemCache(String key) {
         return mMemoryCache.get(key);
+    }
+
+    /**
+     * load bitmap from memory cache or disk cache or network async
+     * then bind imageView and bitmap.
+     * NOTE THAT : should run in UI Thread
+     * @param uri http url
+     * @param imageView bitmap's bind object
+     */
+    public void bindBitmap(final String uri, final ImageView imageView) {
+        bindBitmap(uri, imageView, 0, 0);
+    }
+
+    public void bindBitmap(final String uri, final ImageView imageView, final int reqWidth, final int reqHeight) {
+        imageView.setTag(TAG_KEY_URI, uri);
+        // 尝试从内存中读取图片
+        Bitmap bitmap = loadBitmapFromMemCache(uri);
+        if (bitmap != null) {
+            imageView.setImageBitmap(bitmap);
+            return;
+        }
+
+        Runnable loadBitmapTask = new Runnable() {
+            @Override
+            public void run() {
+                Bitmap bitmap = loadBitmap(uri, reqWidth, reqHeight);
+                if (bitmap != null) {
+                    LoaderResult result = new LoaderResult(imageView, uri, bitmap);
+                    mMainHandler.obtainMessage(MESSAGE_POST_RESULT, result).sendToTarget();
+                }
+            }
+        };
+
+        THREAD_POOL_EXECUTOR.execute(loadBitmapTask);
+
     }
 
     /**
@@ -351,6 +476,20 @@ public class ImageLoader {
         }
         final StatFs stats = new StatFs(path.getPath());
         return stats.getBlockSizeLong() * stats.getAvailableBlocksLong();
+    }
+
+    private static class LoaderResult {
+
+        public ImageView imageView;
+        public String uri;
+        public Bitmap bitmap;
+
+        public LoaderResult(ImageView imageView, String uri, Bitmap bitmap) {
+            this.imageView = imageView;
+            this.uri = uri;
+            this.bitmap = bitmap;
+        }
+
     }
 
 }
