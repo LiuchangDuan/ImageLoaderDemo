@@ -6,6 +6,7 @@ import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
 import android.os.Build;
 import android.os.Environment;
+import android.os.Looper;
 import android.os.StatFs;
 import android.util.Log;
 import android.util.LruCache;
@@ -13,10 +14,14 @@ import android.util.LruCache;
 import java.io.BufferedInputStream;
 import java.io.BufferedOutputStream;
 import java.io.File;
+import java.io.FileDescriptor;
+import java.io.FileInputStream;
 import java.io.IOException;
 import java.io.OutputStream;
 import java.net.HttpURLConnection;
 import java.net.URL;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 
 import libcore.io.DiskLruCache;
 
@@ -32,7 +37,11 @@ public class ImageLoader {
 
     private static final int IO_BUFFER_SIZE = 8 * 1024;
 
+    private static final int DISK_CACHE_INDEX = 0;
+
     private Context mContext;
+
+    private ImageResizer mImaheResizer = new ImageResizer();
 
     private LruCache<String, Bitmap> mMemoryCache;
 
@@ -90,6 +99,51 @@ public class ImageLoader {
 
     private Bitmap getBitmapFromMemCache(String key) {
         return mMemoryCache.get(key);
+    }
+
+    private Bitmap loadBitmapFromHttp(String url, int reqWidth, int reqHeight) throws IOException {
+        if (Looper.myLooper() == Looper.getMainLooper()) {
+            throw new RuntimeException("can not visit network from UI Thread.");
+        }
+        if (mDiskLruCache == null) {
+            return null;
+        }
+        String key = hashKeyFormUrl(url);
+        DiskLruCache.Editor editor = mDiskLruCache.edit(key);
+        if (editor != null) {
+            // 调用它的newOutputStream()方法来创建一个输出流
+            OutputStream outputStream = editor.newOutputStream(DISK_CACHE_INDEX);
+            if (downloadUrlToStream(url, outputStream)) {
+                // 需要调用一下commit()方法进行提交才能使写入生效
+                editor.commit();
+            } else {
+                // 调用abort()方法的话则表示放弃此次写入
+                editor.abort();
+            }
+            mDiskLruCache.flush();
+        }
+        return loadBitmapFromDiskCache(url, reqWidth, reqHeight);
+    }
+
+    private Bitmap loadBitmapFromDiskCache(String url, int reqWidth, int reqHeight) throws IOException {
+        if (Looper.myLooper() == Looper.getMainLooper()) {
+            Log.w(TAG, "load bitmap from UI Thread, it's not recommanded!");
+        }
+        if (mDiskLruCache == null) {
+            return null;
+        }
+        Bitmap bitmap = null;
+        String key = hashKeyFormUrl(url);
+        DiskLruCache.Snapshot snapShot = mDiskLruCache.get(key);
+        if (snapShot != null) {
+            FileInputStream fileInputStream = (FileInputStream) snapShot.getInputStream(DISK_CACHE_INDEX);
+            FileDescriptor fileDescriptor = fileInputStream.getFD();
+            bitmap = mImaheResizer.decodeSampledBitmapFromFileDescriptor(fileDescriptor, reqWidth, reqHeight);
+            if (bitmap != null) {
+                addBitmapToMemoryCache(key, bitmap);
+            }
+        }
+        return bitmap;
     }
 
     /**
@@ -162,6 +216,36 @@ public class ImageLoader {
             }
         }
         return bitmap;
+    }
+
+    /**
+     * 将图片的URL进行MD5编码
+     * 编码后的字符串肯定是唯一的，并且只会包含0-F这样的字符
+     * @param url
+     * @return
+     */
+    private String hashKeyFormUrl(String url) {
+        String cacheKey;
+        try {
+            final MessageDigest mDigest = MessageDigest.getInstance("MD5");
+            mDigest.update(url.getBytes());
+            cacheKey = bytesToHexString(mDigest.digest());
+        } catch (NoSuchAlgorithmException e) {
+            cacheKey = String.valueOf(url.hashCode());
+        }
+        return cacheKey;
+    }
+
+    private String bytesToHexString(byte[] bytes) {
+        StringBuilder sb = new StringBuilder();
+        for (int i = 0; i < bytes.length; i++) {
+            String hex = Integer.toHexString(0xFF & bytes[i]);
+            if (hex.length() == 1) {
+                sb.append('0');
+            }
+            sb.append(hex);
+        }
+        return sb.toString();
     }
 
     /**

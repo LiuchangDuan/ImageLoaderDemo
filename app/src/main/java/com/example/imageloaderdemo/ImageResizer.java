@@ -38,7 +38,7 @@ public class ImageResizer {
 
     }
 
-    public Bitmap decodeSampledBitmapFromFile(FileDescriptor fileDescriptor, int reqWidth, int reqHeight) {
+    public Bitmap decodeSampledBitmapFromFileDescriptor(FileDescriptor fileDescriptor, int reqWidth, int reqHeight) {
         final BitmapFactory.Options options = new BitmapFactory.Options();
         /**
          * 当此参数设为true时
