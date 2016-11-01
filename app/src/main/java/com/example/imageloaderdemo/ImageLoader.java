@@ -3,13 +3,20 @@ package com.example.imageloaderdemo;
 import android.annotation.TargetApi;
 import android.content.Context;
 import android.graphics.Bitmap;
+import android.graphics.BitmapFactory;
 import android.os.Build;
 import android.os.Environment;
 import android.os.StatFs;
+import android.util.Log;
 import android.util.LruCache;
 
+import java.io.BufferedInputStream;
+import java.io.BufferedOutputStream;
 import java.io.File;
 import java.io.IOException;
+import java.io.OutputStream;
+import java.net.HttpURLConnection;
+import java.net.URL;
 
 import libcore.io.DiskLruCache;
 
@@ -22,6 +29,8 @@ public class ImageLoader {
 
     // 磁盘缓存的容量 50MB
     private static final long DISK_CACHE_SIZE = 1024 * 1024 * 50;
+
+    private static final int IO_BUFFER_SIZE = 8 * 1024;
 
     private Context mContext;
 
@@ -51,7 +60,7 @@ public class ImageLoader {
                  * 第二个参数指定当前应用程序的版本号，
                  * 第三个参数指定同一个key可以对应多少个缓存文件，基本都是传1，
                  * 第四个参数指定最多可以缓存多少字节的数据
-                 * 
+                 *
                  * 磁盘缓存在文件系统中的存储路径
                  * 应用的版本号
                  * 单个节点所对应的数据的个数
@@ -81,6 +90,78 @@ public class ImageLoader {
 
     private Bitmap getBitmapFromMemCache(String key) {
         return mMemoryCache.get(key);
+    }
+
+    /**
+     * 访问urlString中传入的网址
+     * 并通过outputStream写入到本地
+     * @param urlString
+     * @param outputStream
+     * @return
+     */
+    public boolean downloadUrlToStream(String urlString, OutputStream outputStream) {
+        HttpURLConnection urlConnection = null;
+        BufferedOutputStream out = null;
+        BufferedInputStream in = null;
+        try {
+            final URL url = new URL(urlString);
+            urlConnection = (HttpURLConnection) url.openConnection();
+//            in = new BufferedInputStream(urlConnection.getInputStream(), 8 * 1024);
+            in = new BufferedInputStream(urlConnection.getInputStream(), IO_BUFFER_SIZE);
+            out = new BufferedOutputStream(outputStream, IO_BUFFER_SIZE);
+
+            int b;
+            while ((b = in.read()) != -1) {
+                out.write(b);
+            }
+
+            return true;
+
+        } catch (final IOException e) {
+//            e.printStackTrace();
+            Log.e(TAG, "downloadBitmap failed." + e);
+        } finally {
+            if (urlConnection != null) {
+                urlConnection.disconnect();
+            }
+            try {
+                if (out != null) {
+                    out.close();
+                }
+                if (in != null) {
+                    in.close();
+                }
+            } catch (final IOException e) {
+                e.printStackTrace();
+            }
+        }
+        return false;
+    }
+
+    private Bitmap downloadBitmapFromUrl(String urlString) {
+        Bitmap bitmap = null;
+        HttpURLConnection urlConnection = null;
+        BufferedInputStream in = null;
+        try {
+            final URL url = new URL(urlString);
+            urlConnection = (HttpURLConnection) url.openConnection();
+            in = new BufferedInputStream(urlConnection.getInputStream(), IO_BUFFER_SIZE);
+            bitmap = BitmapFactory.decodeStream(in);
+        } catch (final IOException e) {
+            Log.e(TAG, "Error in downloadBitmap : " + e);
+        } finally {
+            if (urlConnection != null) {
+                urlConnection.disconnect();
+            }
+            try {
+                if (in != null) {
+                    in.close();
+                }
+            } catch (final IOException e) {
+                e.printStackTrace();
+            }
+        }
+        return bitmap;
     }
 
     /**
