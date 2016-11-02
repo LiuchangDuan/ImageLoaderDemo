@@ -55,7 +55,7 @@ public class ImageLoader {
     // 线程闲置超时时长
     private static final long KEEP_ALIVE = 10L;
 
-    private static final int TAG_KEY_URI = 0x1;
+    private static final int TAG_KEY_URI = R.id.imageloader_uri;
 
     // 磁盘缓存的容量 50MB
     private static final long DISK_CACHE_SIZE = 1024 * 1024 * 50;
@@ -251,13 +251,15 @@ public class ImageLoader {
                 Log.d(TAG, "loadBitmapFromDisk, url : " + uri);
                 return bitmap;
             }
+            // 从网络中加载
+            bitmap = loadBitmapFromHttp(uri, reqWidth, reqHeight);
+            Log.d(TAG, "loadBitmapFromHttp, url : " + uri);
         } catch (IOException e) {
             e.printStackTrace();
         }
 
         if (bitmap == null && !mIsDiskLruCacheCreated) {
             Log.w(TAG, "encounter error, DiskLruCache is not created.");
-            // 最后才从网络中拉取图片
             bitmap = downloadBitmapFromUrl(uri);
         }
 
@@ -475,7 +477,8 @@ public class ImageLoader {
             return path.getUsableSpace();
         }
         final StatFs stats = new StatFs(path.getPath());
-        return stats.getBlockSizeLong() * stats.getAvailableBlocksLong();
+//        return stats.getBlockSizeLong() * stats.getAvailableBlocksLong();
+        return (long) stats.getBlockSize() * (long) stats.getAvailableBlocks();
     }
 
     private static class LoaderResult {
