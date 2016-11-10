@@ -2,6 +2,7 @@ package com.example.imageutils;
 
 import android.content.Context;
 import android.graphics.Matrix;
+import android.graphics.RectF;
 import android.graphics.drawable.Drawable;
 import android.util.AttributeSet;
 import android.util.Log;
@@ -73,11 +74,67 @@ public class ZoomImageView extends ImageView implements ScaleGestureDetector.OnS
             if (scaleFactor * scale > SCALE_MAX) {
                 scaleFactor = SCALE_MAX / scale;
             }
-            mScaleMatrix.postScale(scaleFactor, scaleFactor, getWidth() / 2, getHeight() / 2);
+            /**
+             * 设置缩放比例
+             */
+            mScaleMatrix.postScale(scaleFactor, scaleFactor, detector.getFocusX(), detector.getFocusY());
+//            mScaleMatrix.postScale(scaleFactor, scaleFactor, getWidth() / 2, getHeight() / 2);
             setImageMatrix(mScaleMatrix);
         }
 
         return true;
+    }
+
+    /**
+     * 在缩放时，进行图片显示范围的控制
+     */
+    private void checkBorderAndCenterScale() {
+        RectF rect = getMatrixRectF();
+        float deltaX = 0;
+        float deltaY = 0;
+        int width = getWidth();
+        int height = getHeight();
+        // 如果宽或高大于屏幕，则控制范围
+        if (rect.width() >= width) {
+            if (rect.left > 0) {
+                deltaX = -rect.left;
+            }
+            if (rect.right < width) {
+                deltaX = width - rect.right;
+            }
+        }
+        if (rect.height() >= height) {
+            if (rect.top > 0) {
+                deltaY = -rect.top;
+            }
+            if (rect.bottom < height) {
+                deltaY = height - rect.bottom;
+            }
+        }
+        // 如果宽或高小于屏幕，则让其居中
+        if (rect.width() < width) {
+            deltaX = width * 0.5f - rect.right + 0.5f * rect.width();
+        }
+        if (rect.height() < height) {
+            deltaY = height * 0.5f - rect.bottom + 0.5f * rect.height();
+        }
+        Log.e(TAG, "deltaX = " + deltaX + ", deltaY = " + deltaY);
+        mScaleMatrix.postTranslate(deltaX, deltaY);
+    }
+
+    /**
+     * 根据当前图片的Matrix获得图片的范围
+     * @return
+     */
+    private RectF getMatrixRectF() {
+        Matrix matrix = mScaleMatrix;
+        RectF rect = new RectF();
+        Drawable d = getDrawable();
+        if (d != null) {
+            rect.set(0, 0, d.getIntrinsicWidth(), d.getIntrinsicHeight());
+            matrix.mapRect(rect);
+        }
+        return rect;
     }
 
     @Override
@@ -92,7 +149,8 @@ public class ZoomImageView extends ImageView implements ScaleGestureDetector.OnS
 
     @Override
     public boolean onTouch(View v, MotionEvent event) {
-        return mScaleGestureDetector.onTouchEvent(event);
+        mScaleGestureDetector.onTouchEvent(event);
+        return true;
     }
 
     /**
