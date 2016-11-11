@@ -32,6 +32,18 @@ public class ZoomImageView extends ImageView implements ScaleGestureDetector.OnS
 
     private boolean once = true;
 
+    private int mTouchSlop;
+
+    private float mLastX;
+    private float mLastY;
+
+    private boolean isCanDrag;
+
+    private int lastPointerCount;
+
+    private boolean isCheckTopAndBottom = true;
+    private boolean isCheckLeftAndRight = true;
+
     /**
      * 缩放的手势检测
      */
@@ -79,6 +91,7 @@ public class ZoomImageView extends ImageView implements ScaleGestureDetector.OnS
              */
             mScaleMatrix.postScale(scaleFactor, scaleFactor, detector.getFocusX(), detector.getFocusY());
 //            mScaleMatrix.postScale(scaleFactor, scaleFactor, getWidth() / 2, getHeight() / 2);
+            checkBorderAndCenterScale();
             setImageMatrix(mScaleMatrix);
         }
 
@@ -149,7 +162,63 @@ public class ZoomImageView extends ImageView implements ScaleGestureDetector.OnS
 
     @Override
     public boolean onTouch(View v, MotionEvent event) {
+//        if (mScaleGestureDetector.onTouchEvent(event)) {
+//            return true;
+//        }
         mScaleGestureDetector.onTouchEvent(event);
+        float x = 0, y = 0;
+        // 拿到触摸点的个数
+        final int pointerCount = event.getPointerCount();
+        // 得到多个触摸点的x与y均值
+        for (int i = 0; i < pointerCount; i++) {
+            x += event.getX(i);
+            y += event.getY(i);
+        }
+        x = x / pointerCount;
+        y = y / pointerCount;
+        // 每当触摸点发生变化时，重置mLastX, mLastY
+        if (pointerCount != lastPointerCount) {
+            isCanDrag = false;
+            mLastX = x;
+            mLastY = y;
+        }
+        lastPointerCount = pointerCount;
+        switch (event.getAction()) {
+            case MotionEvent.ACTION_MOVE:
+                Log.e(TAG, "ACTION_MOVE");
+                float dx = x - mLastX;
+                float dy = y - mLastY;
+                if (!isCanDrag) {
+                    isCanDrag = isCanDrag(dx, dy);
+                }
+                if (isCanDrag) {
+                    RectF rectF = getMatrixRectF();
+                    if (getDrawable() != null) {
+                        isCheckLeftAndRight = isCheckTopAndBottom = true;
+                        // 如果宽度小于屏幕宽度，则禁止左右移动
+                        if (rectF.width() < getWidth()) {
+                            dx = 0;
+                            isCheckLeftAndRight = false;
+                        }
+                        // 如果高度小于屏幕高度，则禁止上下移动
+                        if (rectF.height() < getHeight()) {
+                            dy = 0;
+                            isCheckTopAndBottom = false;
+                        }
+                        mScaleMatrix.postTranslate(dx, dy);
+                        checkMatrixBounds();
+                        setImageMatrix(mScaleMatrix);
+                    }
+                }
+                mLastX = x;
+                mLastY = y;
+                break;
+            case MotionEvent.ACTION_UP:
+            case MotionEvent.ACTION_CANCEL:
+                Log.e(TAG, "ACTION_UP");
+                lastPointerCount = 0;
+                break;
+        }
         return true;
     }
 
@@ -197,7 +266,7 @@ public class ZoomImageView extends ImageView implements ScaleGestureDetector.OnS
             }
             // 如果宽和高都大于屏幕，则让其按比例适应屏幕大小
             if (dw > width && dh > height) {
-                scale = Math.min(dw * 1.0f / width, dh * 1.0f / height);
+                scale = Math.min(width * 1.0f / dw, height * 1.0f / dh);
             }
             initScale = scale;
             // 图片移动至屏幕中心
@@ -207,4 +276,39 @@ public class ZoomImageView extends ImageView implements ScaleGestureDetector.OnS
             once = false;
         }
     }
+
+    /**
+     * 移动时，进行边界判断，主要判断宽或高大于屏幕的
+     */
+    private void checkMatrixBounds() {
+        RectF rect = getMatrixRectF();
+        float deltaX = 0, deltaY = 0;
+        final float viewWidth = getWidth();
+        final float viewHeight = getHeight();
+        // 判断移动或缩放后，图片显示是否超出屏幕边界
+        if (rect.top > 0 && isCheckTopAndBottom) {
+            deltaY = -rect.top;
+        }
+        if (rect.bottom < viewHeight && isCheckTopAndBottom) {
+            deltaY = viewHeight - rect.bottom;
+        }
+        if (rect.left > 0 && isCheckLeftAndRight) {
+            deltaX = -rect.left;
+        }
+        if (rect.right < viewHeight && isCheckLeftAndRight) {
+            deltaX = viewWidth - rect.right;
+        }
+        mScaleMatrix.postTranslate(deltaX, deltaY);
+    }
+
+    /**
+     * 是否有推动行为
+     * @param dx
+     * @param dy
+     * @return
+     */
+    private boolean isCanDrag(float dx, float dy) {
+        return Math.sqrt((dx * dx) + (dy * dy)) >= mTouchSlop;
+    }
+
 }
