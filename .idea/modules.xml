@@ -5,6 +5,7 @@
       <module fileurl="file://$PROJECT_DIR$/ImageLoaderDemo.iml" filepath="$PROJECT_DIR$/ImageLoaderDemo.iml" />
       <module fileurl="file://$PROJECT_DIR$/app/app.iml" filepath="$PROJECT_DIR$/app/app.iml" />
       <module fileurl="file://$PROJECT_DIR$/imageutils/imageutils.iml" filepath="$PROJECT_DIR$/imageutils/imageutils.iml" />
+      <module fileurl="file://$PROJECT_DIR$/rotatepicbrowser/rotatepicbrowser.iml" filepath="$PROJECT_DIR$/rotatepicbrowser/rotatepicbrowser.iml" />
     </modules>
   </component>
 </project>

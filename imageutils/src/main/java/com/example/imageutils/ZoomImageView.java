@@ -6,9 +6,11 @@ import android.graphics.RectF;
 import android.graphics.drawable.Drawable;
 import android.util.AttributeSet;
 import android.util.Log;
+import android.view.GestureDetector;
 import android.view.MotionEvent;
 import android.view.ScaleGestureDetector;
 import android.view.View;
+import android.view.ViewConfiguration;
 import android.view.ViewTreeObserver;
 import android.widget.ImageView;
 
@@ -22,6 +24,8 @@ public class ZoomImageView extends ImageView implements ScaleGestureDetector.OnS
 
     public static final float SCALE_MAX = 4.0f;
 
+    private static final float SCALE_MID = 2.0f;
+
     // 初始化时的缩放比例，如果图片宽或高大于屏幕，此值将小于0
     private float initScale = 1.0f;
 
@@ -31,6 +35,13 @@ public class ZoomImageView extends ImageView implements ScaleGestureDetector.OnS
     private final float[] matrixValues = new float[9];
 
     private boolean once = true;
+
+    /**
+     * 用于双击检测S
+     */
+    private GestureDetector mGestureDetector;
+
+    private boolean isAutoScale;
 
     private int mTouchSlop;
 
@@ -57,9 +68,92 @@ public class ZoomImageView extends ImageView implements ScaleGestureDetector.OnS
 
     public ZoomImageView(Context context, AttributeSet attrs) {
         super(context, attrs);
-        super.setScaleType(ScaleType.MATRIX);
+//        super.setScaleType(ScaleType.MATRIX);
         mScaleGestureDetector = new ScaleGestureDetector(context, this);
+        mGestureDetector = new GestureDetector(context,
+                new GestureDetector.SimpleOnGestureListener() {
+                    @Override
+                    public boolean onDoubleTap(MotionEvent e) {
+                        if (isAutoScale == true) {
+                            return true;
+                        }
+                        float x = e.getX();
+                        float y = e.getY();
+                        Log.e("DoubleTap", getScale() + " , " + initScale);
+                        if (getScale() < SCALE_MID) {
+                            ZoomImageView.this.postDelayed(new AutoScaleRunnable(SCALE_MID, x, y), 16);
+                            isAutoScale = true;
+                        } else if (getScale() >= SCALE_MID && getScale() < SCALE_MAX) {
+                            ZoomImageView.this.postDelayed(new AutoScaleRunnable(SCALE_MAX, x, y), 16);
+                            isAutoScale = true;
+                        } else {
+                            ZoomImageView.this.postDelayed(new AutoScaleRunnable(initScale, x, y), 16);
+                            isAutoScale = true;
+                        }
+                        return true;
+                    }
+                });
+        mTouchSlop = ViewConfiguration.get(context).getScaledTouchSlop();
+        super.setScaleType(ScaleType.MATRIX);
         this.setOnTouchListener(this);
+    }
+
+    /**
+     * 自动缩放的任务
+     */
+    private class AutoScaleRunnable implements Runnable {
+
+        static final float BIGGER = 1.07f;
+        static final float SMALLER = 0.93f;
+
+        private float mTargetScale;
+
+        private float tmpScale;
+
+        /**
+         * 缩放的中心
+         */
+        private float x;
+        private float y;
+
+        /**
+         * 传入目标缩放值，根据目标值与当前值，判断应该放大还是缩小
+         * @param targetScale
+         * @param x
+         * @param y
+         */
+        public AutoScaleRunnable(float targetScale, float x, float y) {
+            this.mTargetScale = targetScale;
+            this.x = x;
+            this.y = y;
+            if (getScale() < mTargetScale) {
+                tmpScale = BIGGER;
+            } else {
+                tmpScale = SMALLER;
+            }
+        }
+
+        @Override
+        public void run() {
+            // 进行缩放
+            mScaleMatrix.postScale(tmpScale, tmpScale, x, y);
+            checkBorderAndCenterScale();
+            setImageMatrix(mScaleMatrix);
+            final float currentScale = getScale();
+            // 如果值在合法范围内，继续缩放
+            if (((tmpScale > 1f) && (currentScale < mTargetScale))
+                    || ((tmpScale < 1f) && (mTargetScale < currentScale))) {
+                ZoomImageView.this.postDelayed(this, 16);
+            } else {
+                // 设置为目标的缩放比例
+                final float deltaScale = mTargetScale / currentScale;
+                mScaleMatrix.postScale(deltaScale, deltaScale, x, y);
+                checkBorderAndCenterScale();
+                setImageMatrix(mScaleMatrix);
+                isAutoScale = false;
+            }
+        }
+
     }
 
     @Override
@@ -162,9 +256,9 @@ public class ZoomImageView extends ImageView implements ScaleGestureDetector.OnS
 
     @Override
     public boolean onTouch(View v, MotionEvent event) {
-//        if (mScaleGestureDetector.onTouchEvent(event)) {
-//            return true;
-//        }
+        if (mScaleGestureDetector.onTouchEvent(event)) {
+            return true;
+        }
         mScaleGestureDetector.onTouchEvent(event);
         float x = 0, y = 0;
         // 拿到触摸点的个数
@@ -219,7 +313,7 @@ public class ZoomImageView extends ImageView implements ScaleGestureDetector.OnS
                 lastPointerCount = 0;
                 break;
         }
-        return true;
+        return false;
     }
 
     /**

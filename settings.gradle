@@ -1,1 +1,1 @@
-include ':app', ':imageutils'
+include ':app', ':imageutils', ':rotatepicbrowser'
